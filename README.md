@@ -1,4 +1,6 @@
-# Token2 NFC Burner — rebuilt
+# Token2 NFC Burner — rebuilt <img width="250" align=right  alt="burnerappicon" src="https://github.com/user-attachments/assets/bdd83a7f-7485-4615-8644-ede7fe80d4e4" />
+
+
 
 A modern, wizard-driven rebuild of the Token2 NFC Burner Android app for
 2nd-generation single-profile programmable TOTP tokens
