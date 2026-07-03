@@ -1,0 +1,35 @@
+# Gradle
+.gradle/
+build/
+/app/build/
+/captures/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+.navigation/
+/local.properties
+
+# Native build
+.externalNativeBuild/
+.cxx/
+
+# Build outputs / signing — never commit these
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.keystore
+*.jks
+keystore.properties
+
+# Logs & OS cruft
+*.log
+.DS_Store
+Thumbs.db
+
+# Keep the Gradle wrapper jar (it's needed to build)
+!gradle/wrapper/gradle-wrapper.jar

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Main app theme. -->
+    <style name="Theme.Token2Burner" parent="android:Theme.Material.NoActionBar" />
+
+    <!-- Launch (splash) theme using the AndroidX SplashScreen API: a white
+         background with the Token2 shield logo centered, handing off to the main
+         theme once ready. -->
+    <style name="Theme.Token2Burner.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.Token2Burner</item>
+    </style>
+
+</resources>

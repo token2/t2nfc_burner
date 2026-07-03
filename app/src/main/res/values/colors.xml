@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Splash background: white, so the Token2 shield logo (which has dark detail)
+         reads clearly. -->
+    <color name="splash_background">#FFFFFF</color>
+    <color name="brand_red">#F80041</color>
+    <color name="white">#FFFFFF</color>
+</resources>
