@@ -61,6 +61,17 @@ built around the reality that most support tickets come from people scanning the
 - **Refuses unknown devices.** If the serial prefix isn't a known programmable
   model, the app reads info but won't write — mirroring the reference tool.
 
+## Screenshots
+
+<img width="500"  alt="Screenshot_20260703_122011_Token2 Burner" src="https://github.com/user-attachments/assets/ade33f47-b294-4846-bf3a-c79e006d76df" />
+<img width="500" alt="Screenshot_20260703_122027_Token2 Burner" src="https://github.com/user-attachments/assets/a9750299-6b76-411b-861a-d45669d4a516" />
+<img width="500" alt="Screenshot_20260703_122103_Token2 Burner" src="https://github.com/user-attachments/assets/1ea2e1ae-4037-4260-878d-aaf533749a72" />
+<img width="500" alt="Screenshot_20260703_122119_Token2 Burner" src="https://github.com/user-attachments/assets/b440baf9-2f2d-4c69-8827-49fb288d3c52" />
+<img width="500" alt="Screenshot_20260703_122125_Token2 Burner" src="https://github.com/user-attachments/assets/9e5e3f5e-59bd-4487-8f30-27ea494c7600" />
+
+
+
+
 ## Protocol fidelity
 
 The wire protocol is a byte-exact port of the official `token2_config.py`
