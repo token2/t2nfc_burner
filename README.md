@@ -145,6 +145,12 @@ The fixed 16-byte device key and protocol details are properties of the token
 firmware and are reproduced here only to interoperate with Token2's own
 hardware; they are not secrets.
 
+
+## Where to get it?
+
+The new version is available on [`Google Play`](https://play.google.com/store/apps/details?id=com.token2.nfcburner2&hl=en). You can also download the APK from the releases section of this repository.
+
+
 ## Contact
 
 Token2 — https://token2.swiss/contact
