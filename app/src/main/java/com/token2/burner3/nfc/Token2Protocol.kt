@@ -143,28 +143,25 @@ class Token2Protocol(private val transport: Transport) {
     // -- Writes ----------------------------------------------------------------
 
     /**
-     * Set the OTP seed. [seed] is the raw secret (1..63 bytes). Framing follows
-     * the reference: general ISO 9797-1 minimal padding, with the special
-     * 32-byte "extra full pad block" case.
+     * Set the OTP seed. [seed] is the raw secret (1..63 bytes).
+     *
+     * Padding follows ISO/IEC 9797-1 method 2: always append 0x80, then zero-fill
+     * to the next 16-byte boundary. Block-aligned seeds (16, 32, 48 bytes) get a
+     * full extra padding block, which the device requires.
      */
     fun setSeed(seed: ByteArray): WriteOutcome {
         require(seed.isNotEmpty() && seed.size <= 63) { "seed must be 1..63 bytes" }
 
-        val enc: ByteArray
-        val macHeader: ByteArray
-        if (seed.size == 32) {
-            val padded = seed + byteArrayOf(0x80.toByte()) + ByteArray(15)
-            enc = Sm4(DEVICE_KEY).encryptEcb(padded)
-            macHeader = Hex.decode("80C5010030")
-        } else {
-            var body = seed
-            if (body.size % 16 != 0) {
-                val padLen = 15 - (body.size % 16)
-                body = body + byteArrayOf(0x80.toByte()) + ByteArray(padLen)
-            }
-            enc = Sm4(DEVICE_KEY).encryptEcb(body)
-            macHeader = Hex.decode("80C50100") + byteArrayOf(enc.size.toByte())
-        }
+        // ISO/IEC 9797-1 padding method 2: always append 0x80, then pad with 0x00
+        // to the next 16-byte boundary. If the seed is already block-aligned
+        // (16, 32, 48 bytes), this adds a FULL extra padding block — required by
+        // the device. (The old code special-cased 32 bytes and silently skipped
+        // padding for other block-aligned lengths such as 16 and 48, which the
+        // token rejected — leaving restricted-sync models seed-cleared.)
+        var body = seed + byteArrayOf(0x80.toByte())
+        while (body.size % 16 != 0) body += byteArrayOf(0x00)
+        val enc = Sm4(DEVICE_KEY).encryptEcb(body)
+        val macHeader = Hex.decode("80C50100") + byteArrayOf(enc.size.toByte())
 
         val mac = calcMac(macHeader + enc)
         return runWrite(0x84, 0xC5, 0x01, 0x00, enc + mac)
