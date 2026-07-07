@@ -12,8 +12,8 @@ android {
         applicationId = "com.token2.nfcburner2"
         minSdk = 24
         targetSdk = 35
-        versionCode = 27
-        versionName = "3.0.0"
+        versionCode = 30
+        versionName = "3.0.1"
     }
 
     buildTypes {
