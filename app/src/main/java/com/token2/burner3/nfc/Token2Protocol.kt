@@ -126,18 +126,45 @@ class Token2Protocol(private val transport: Transport) {
     // -- Auth ------------------------------------------------------------------
 
     /** Challenge-response handshake with the fixed device key. */
-    fun authenticate(): Boolean {
-        val chalResp = send(0x80, 0x4B, 0x08, 0x00, byteArrayOf(0x00))
-        if (!isOk(chalResp)) return false
-        val challenge = chalResp.copyOfRange(0, chalResp.size - 2)
-        if (challenge.size != 8) return false
+    /** Outcome of the authentication handshake. */
+    sealed interface AuthResult {
+        data object Ok : AuthResult                       // SW 9000
+        data object Locked : AuthResult                   // SW 6983 — genuinely locked
+        data class Rejected(val sw: Int) : AuthResult     // any other status word
+        data class TransportLost(val message: String) : AuthResult  // link dropped mid-handshake
+    }
 
-        // Inflate to 16 bytes (append eight zeros), SM4-encrypt with device key.
-        val block = challenge + ByteArray(8)
-        val response = Sm4(DEVICE_KEY).encryptEcb(block)
+    /**
+     * Challenge-response handshake with the fixed device key.
+     *
+     * Crucially, a *dropped NFC link* during the handshake is reported as
+     * [AuthResult.TransportLost] — NOT as a lock. Earlier this method returned a
+     * bare Boolean, so a lost connection was indistinguishable from a genuine
+     * 6983 lock and the app told users their token was "locked / sealed by an
+     * administrator" when in fact the tap had simply been interrupted.
+     */
+    fun authenticate(): AuthResult {
+        val chalResp: ByteArray
+        val authResp: ByteArray
+        try {
+            chalResp = send(0x80, 0x4B, 0x08, 0x00, byteArrayOf(0x00))
+            if (!isOk(chalResp)) return AuthResult.Rejected(statusWord(chalResp))
+            val challenge = chalResp.copyOfRange(0, chalResp.size - 2)
+            if (challenge.size != 8) return AuthResult.Rejected(statusWord(chalResp))
 
-        val authResp = send(0x80, 0xCE, 0x00, 0x00, response)
-        return isOk(authResp)   // 9000 = ok; 6983 = key locked; anything else = fail
+            // Inflate to 16 bytes (append eight zeros), SM4-encrypt with device key.
+            val block = challenge + ByteArray(8)
+            val response = Sm4(DEVICE_KEY).encryptEcb(block)
+
+            authResp = send(0x80, 0xCE, 0x00, 0x00, response)
+        } catch (e: TransportException) {
+            return AuthResult.TransportLost(e.message ?: "connection lost")
+        }
+        return when (statusWord(authResp)) {
+            0x9000 -> AuthResult.Ok
+            0x6983 -> AuthResult.Locked
+            else -> AuthResult.Rejected(statusWord(authResp))
+        }
     }
 
     // -- Writes ----------------------------------------------------------------
