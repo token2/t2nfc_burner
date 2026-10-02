@@ -59,6 +59,9 @@ data class WizardState(
     val periodSeconds: Int = 30,          // 30 or 60
     val displayTimeoutIndex: Int = 1,     // 0=15s,1=30s,2=60s,3=120s
 
+    /** App setting: verify the tapped NFC device before writing (persisted). */
+    val nfcPreVerification: Boolean = true,
+
     // Live token info (populated on tap)
     val tokenInfo: Token2Protocol.TokenInfo? = null,
 
@@ -102,6 +105,7 @@ data class WizardState(
             algorithm == other.algorithm &&
             periodSeconds == other.periodSeconds &&
             displayTimeoutIndex == other.displayTimeoutIndex &&
+            nfcPreVerification == other.nfcPreVerification &&
             tokenInfo == other.tokenInfo &&
             busyMessage == other.busyMessage &&
             error == other.error &&
@@ -131,6 +135,7 @@ data class WizardState(
         r = 31 * r + algorithm.hashCode()
         r = 31 * r + periodSeconds
         r = 31 * r + displayTimeoutIndex
+        r = 31 * r + nfcPreVerification.hashCode()
         r = 31 * r + (tokenInfo?.hashCode() ?: 0)
         r = 31 * r + (busyMessage?.hashCode() ?: 0)
         r = 31 * r + (error?.hashCode() ?: 0)
