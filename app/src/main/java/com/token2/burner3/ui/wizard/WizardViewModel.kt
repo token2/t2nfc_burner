@@ -1,12 +1,14 @@
 package com.token2.burner3.ui.wizard
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.token2.burner3.nfc.IsoDepTransport
 import com.token2.burner3.nfc.Token2Protocol
 import com.token2.burner3.otp.OtpAlgorithm
 import com.token2.burner3.otp.SeedInput
 import com.token2.burner3.otp.Totp
+import com.token2.burner3.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,9 +23,11 @@ import kotlinx.coroutines.withContext
  * decides — based on the current [Step] — whether that tap should read info,
  * write, or be politely ignored.
  */
-class WizardViewModel : ViewModel() {
+class WizardViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val _state = MutableStateFlow(WizardState())
+    private val settings = AppSettings(app)
+
+    private val _state = MutableStateFlow(WizardState(nfcPreVerification = settings.nfcPreVerification))
     val state: StateFlow<WizardState> = _state.asStateFlow()
 
     // -- Navigation ------------------------------------------------------------
@@ -204,6 +208,30 @@ class WizardViewModel : ViewModel() {
     fun setPeriod(seconds: Int) = _state.update { it.copy(periodSeconds = if (seconds == 60) 60 else 30) }
     fun setDisplayTimeout(index: Int) = _state.update { it.copy(displayTimeoutIndex = index.coerceIn(0, 3)) }
 
+    /** Toggle (and persist) NFC device pre-verification. */
+    fun setNfcPreVerification(enabled: Boolean) {
+        settings.nfcPreVerification = enabled
+        _state.update { it.copy(nfcPreVerification = enabled) }
+    }
+
+    /** Run the authentication handshake, mapping any exception to a lost link. */
+    private suspend fun authenticate(protocol: Token2Protocol): Token2Protocol.AuthResult =
+        withContext(Dispatchers.IO) {
+            runCatching { protocol.authenticate() }
+                .getOrElse { Token2Protocol.AuthResult.TransportLost(it.message ?: "connection lost") }
+        }
+
+    /** Short log text for a failed [Token2Protocol.AuthResult]. */
+    private fun authFailureText(r: Token2Protocol.AuthResult, verified: Boolean): String = when (r) {
+        Token2Protocol.AuthResult.Ok -> "OK"
+        Token2Protocol.AuthResult.Locked -> "Authentication refused (6983 — key locked). Aborting."
+        is Token2Protocol.AuthResult.TransportLost -> "Connection lost during authentication. Aborting."
+        is Token2Protocol.AuthResult.Rejected ->
+            "Authentication rejected (SW %04X)".format(r.sw) +
+                (if (verified) "." else " — pre-verification is off; this may not be a programmable token.") +
+                " Aborting."
+    }
+
     /**
      * Re-parse a base32 secret the user edited on the confirm screen. Returns
      * true if it was accepted (and applied), false if invalid — the caller shows
@@ -269,7 +297,9 @@ class WizardViewModel : ViewModel() {
 
     /** Identify screen: read everything possible and present it, no writes. */
     private suspend fun performIdentify(protocol: Token2Protocol, hw: IsoDepTransport.NfcHardware?) {
-        val identity = withContext(Dispatchers.IO) { runCatching { protocol.identify() }.getOrNull() }
+        // Identify is a diagnostic: it always runs the full detection, regardless
+        // of the pre-verification setting.
+        val identity = withContext(Dispatchers.IO) { runCatching { protocol.identify(preVerify = true) }.getOrNull() }
         val (headline, info) = when (identity?.kind) {
             Token2Protocol.DeviceKind.PROGRAMMABLE_TOKEN -> {
                 val i = identity.info
@@ -318,21 +348,32 @@ class WizardViewModel : ViewModel() {
 
     private suspend fun performExpert(protocol: Token2Protocol, hw: IsoDepTransport.NfcHardware?) {
         val s = _state.value
-        appendLog("Tag detected. Identifying…")
-        val identity = withContext(Dispatchers.IO) { runCatching { protocol.identify() }.getOrNull() }
+        // The expert IDENTIFY action is read-only, so it always gets full detection.
+        val preVerify = s.nfcPreVerification || s.expertAction == ExpertAction.IDENTIFY
+        appendLog(if (preVerify) "Tag detected. Identifying…" else "Tag detected. Pre-verification off — skipping device checks.")
+        val identity = withContext(Dispatchers.IO) { runCatching { protocol.identify(preVerify) }.getOrNull() }
         when (identity?.kind) {
             Token2Protocol.DeviceKind.PROGRAMMABLE_TOKEN -> {
-                val info = identity.info!!
+                val info = identity.info
                 _state.update { it.copy(tokenInfo = info) }
-                appendLog("Model: ${info.model ?: "unknown"}")
-                appendLog("Serial: ${info.serial}")
-                appendLog("On-device UTC: ${formatUtc(info.utcEpochSeconds)}")
+                if (info != null) {
+                    appendLog("Model: ${info.model ?: "unknown"}")
+                    appendLog("Serial: ${info.serial}")
+                    appendLog("On-device UTC: ${formatUtc(info.utcEpochSeconds)}")
+                } else {
+                    appendLog("Device did not answer the info command (continuing unverified).")
+                }
                 if (s.expertAction == ExpertAction.IDENTIFY) return
-                if (!info.isKnownModel) { appendLog("Unknown model prefix — refusing to write."); return }
+                if (identity.verified && info?.isKnownModel != true) {
+                    appendLog("Unknown model prefix — refusing to write."); return
+                }
+                if (!identity.verified && info?.isKnownModel != true) {
+                    appendLog("Unknown/unread model — writing anyway (pre-verification off).")
+                }
 
                 appendLog("Authenticating…")
-                val ok = withContext(Dispatchers.IO) { runCatching { protocol.authenticate() }.getOrDefault(false) }
-                if (!ok) { appendLog("Authentication failed (key locked?). Aborting."); return }
+                val auth = authenticate(protocol)
+                if (auth != Token2Protocol.AuthResult.Ok) { appendLog(authFailureText(auth, identity.verified)); return }
                 appendLog("Authenticated.")
 
                 val now = System.currentTimeMillis() / 1000
@@ -402,23 +443,31 @@ class WizardViewModel : ViewModel() {
             tsLog("Please tick the acknowledgement box before syncing.")
             return
         }
-        tsLog("Tag detected. Identifying…")
-        val identity = withContext(Dispatchers.IO) { runCatching { protocol.identify() }.getOrNull() }
+        tsLog(if (s.nfcPreVerification) "Tag detected. Identifying…" else "Tag detected. Pre-verification off — skipping device checks.")
+        val identity = withContext(Dispatchers.IO) { runCatching { protocol.identify(s.nfcPreVerification) }.getOrNull() }
         when (identity?.kind) {
             Token2Protocol.DeviceKind.PROGRAMMABLE_TOKEN -> {
-                val info = identity.info!!
+                val info = identity.info
                 _state.update { it.copy(tokenInfo = info) }
-                tsLog("Model: ${info.model ?: "unknown"} · serial ${info.serial}")
-                tsLog("Current on-device UTC: ${formatUtc(info.utcEpochSeconds)}")
-                if (!info.isKnownModel) { tsLog("Unknown model prefix — refusing."); return }
+                if (info != null) {
+                    tsLog("Model: ${info.model ?: "unknown"} · serial ${info.serial}")
+                    tsLog("Current on-device UTC: ${formatUtc(info.utcEpochSeconds)}")
+                } else {
+                    tsLog("Device did not answer the info command (continuing unverified).")
+                }
+                val knownModel = info?.isKnownModel == true
+                if (identity.verified && !knownModel) { tsLog("Unknown model prefix — refusing."); return }
 
-                val clears = Token2Protocol.timeSyncClearsSeed(info.serial)
-                if (clears) tsLog("Note: this model has restricted sync — its seed will be cleared.")
+                // For an unknown/unread model we can't tell whether sync is
+                // restricted, so assume the worst: the seed will be cleared.
+                val clears = if (knownModel) Token2Protocol.timeSyncClearsSeed(info?.serial) else true
+                if (!knownModel) tsLog("Model unknown — assume its seed will be cleared.")
+                else if (clears) tsLog("Note: this model has restricted sync — its seed will be cleared.")
                 else tsLog("This model keeps its seed through the sync.")
 
                 tsLog("Authenticating…")
-                val ok = withContext(Dispatchers.IO) { runCatching { protocol.authenticate() }.getOrDefault(false) }
-                if (!ok) { tsLog("Authentication failed (key locked?). Aborting."); return }
+                val auth = authenticate(protocol)
+                if (auth != Token2Protocol.AuthResult.Ok) { tsLog(authFailureText(auth, identity.verified)); return }
 
                 val target = s.timeSyncCustomEpoch ?: (System.currentTimeMillis() / 1000)
                 tsLog("Setting time to ${formatUtc(target)}…")
@@ -429,11 +478,15 @@ class WizardViewModel : ViewModel() {
                 }
                 if (r is Token2Protocol.WriteOutcome.Success) {
                     tsLog("Time set successfully.")
-                    if (clears) tsLog("The seed on this model was cleared — re-program it before use.")
+                    if (clears) tsLog(if (knownModel) "The seed on this model was cleared — re-program it before use."
+                                      else "The seed may have been cleared — re-program it before use.")
                     tsLog("Power-cycle the token to apply.")
                     val msg = buildString {
                         append("Time set to ${formatUtc(target)}.")
-                        if (clears) append("\n\nThis model cleared its secret — re-program it before use.")
+                        if (clears) append(
+                            if (knownModel) "\n\nThis model cleared its secret — re-program it before use."
+                            else "\n\nThe model is unknown, so its secret may have been cleared — re-program it before use."
+                        )
                         append("\n\nPower-cycle the token to apply.")
                     }
                     _state.update { it.copy(successDialog = msg, successInfo = deviceInfoLines(info, hw)) }
@@ -450,14 +503,16 @@ class WizardViewModel : ViewModel() {
     }
 
     private suspend fun peekInfo(protocol: Token2Protocol) {
+        val preVerify = _state.value.nfcPreVerification
         val identity = withContext(Dispatchers.IO) {
-            runCatching { protocol.identify() }.getOrNull()
+            runCatching { protocol.identify(preVerify) }.getOrNull()
         }
         when (identity?.kind) {
             Token2Protocol.DeviceKind.PROGRAMMABLE_TOKEN -> {
-                val info = identity.info!!
+                val info = identity.info
                 _state.update { it.copy(tokenInfo = info) }
-                if (!info.isKnownModel) {
+                // Unverified early tap: show whatever we read, never raise an error.
+                if (identity.verified && info != null && !info.isKnownModel) {
                     _state.update { it.copy(error = FriendlyError.unknownModel(info.serial)) }
                 }
             }
@@ -476,7 +531,7 @@ class WizardViewModel : ViewModel() {
 
         _state.update { it.copy(step = Step.Writing, busyMessage = "Reading the token…", error = null) }
 
-        val identity = withContext(Dispatchers.IO) { runCatching { protocol.identify() }.getOrNull() }
+        val identity = withContext(Dispatchers.IO) { runCatching { protocol.identify(s.nfcPreVerification) }.getOrNull() }
         when (identity?.kind) {
             Token2Protocol.DeviceKind.PROGRAMMABLE_TOKEN -> { /* proceed */ }
             Token2Protocol.DeviceKind.SECURITY_KEY -> {
@@ -487,16 +542,23 @@ class WizardViewModel : ViewModel() {
             }
             else -> { fail(FriendlyError.notAToken2()); return }
         }
-        val info = identity.info!!
+        val info = identity.info
         _state.update { it.copy(tokenInfo = info) }
-        if (!info.isKnownModel) {
-            fail(FriendlyError.unknownModel(info.serial)); return
+        if (identity.verified && info?.isKnownModel != true) {
+            fail(FriendlyError.unknownModel(info?.serial ?: "unknown")); return
         }
 
         _state.update { it.copy(busyMessage = "Unlocking the token…") }
-        val authed = withContext(Dispatchers.IO) { runCatching { protocol.authenticate() }.getOrDefault(false) }
-        if (!authed) {
-            fail(FriendlyError.authLocked()); return
+        when (val auth = authenticate(protocol)) {
+            Token2Protocol.AuthResult.Ok -> {}
+            Token2Protocol.AuthResult.Locked -> { fail(FriendlyError.authLocked()); return }
+            is Token2Protocol.AuthResult.TransportLost -> { fail(FriendlyError.tokenMoved()); return }
+            is Token2Protocol.AuthResult.Rejected -> {
+                // With pre-verification off, a rejected handshake is the first sign
+                // we're talking to the wrong device — say so rather than show a code.
+                fail(if (identity.verified) FriendlyError.deviceRejected(auth.sw) else FriendlyError.notAToken2())
+                return
+            }
         }
 
         // Config first (clock + parameters), then seed — matching the reference order.
@@ -570,9 +632,10 @@ class WizardViewModel : ViewModel() {
                 algorithm = it.algorithm,
                 periodSeconds = it.periodSeconds,
                 displayTimeoutIndex = it.displayTimeoutIndex,
+                nfcPreVerification = it.nfcPreVerification,
             )
         }
     }
 
-    fun startOver() = _state.update { WizardState() }
+    fun startOver() = _state.update { WizardState(nfcPreVerification = it.nfcPreVerification) }
 }

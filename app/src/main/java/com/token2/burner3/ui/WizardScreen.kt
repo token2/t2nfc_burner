@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -75,6 +76,7 @@ fun WizardScreen(
     onOpenContact: () -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
+    var showSettings by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -97,6 +99,14 @@ fun WizardScreen(
                         state.identifyMode -> BackNavButton("Wizard", vm::exitIdentify)
                         state.step in listOf(Step.ScanSecret, Step.ConfirmSecret, Step.PowerOn, Step.TapToWrite) ->
                             BackNavButton("Back", vm::back)
+                    }
+                },
+                actions = {
+                    // Not while a write is in flight — changing the gate mid-write makes no sense.
+                    if (state.step != Step.Writing) {
+                        IconButton(onClick = { showSettings = true }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
                     }
                 },
             )
@@ -139,6 +149,14 @@ fun WizardScreen(
                 Spacer(Modifier.height(40.dp))
             }
         }
+    }
+
+    if (showSettings) {
+        SettingsDialog(
+            nfcPreVerification = state.nfcPreVerification,
+            onNfcPreVerificationChange = vm::setNfcPreVerification,
+            onDismiss = { showSettings = false },
+        )
     }
 
     // Errors surface as a modal sheet so guidance is unmissable.
@@ -917,6 +935,10 @@ private fun TapStep(state: WizardState, reduceMotion: Boolean) {
         Spacer(Modifier.height(28.dp))
         HoldToPhoneAnimation(reduceMotion)
         Spacer(Modifier.height(28.dp))
+        if (!state.nfcPreVerification) {
+            PreVerificationOffCard()
+            Spacer(Modifier.height(12.dp))
+        }
         HintCard(
             title = "Where's the antenna?",
             body = "The NFC antenna is usually near the top of the phone, but on some models " +
@@ -926,7 +948,7 @@ private fun TapStep(state: WizardState, reduceMotion: Boolean) {
         Spacer(Modifier.height(12.dp))
         state.tokenInfo?.let { info ->
             HintCard(
-                title = "Detected",
+                title = if (state.nfcPreVerification) "Detected" else "Detected (unverified)",
                 body = "${info.model ?: "Unknown"} · serial ${info.serial}",
             )
             Spacer(Modifier.height(12.dp))
@@ -1594,10 +1616,15 @@ private fun ExpertConsole(state: WizardState, vm: WizardViewModel, onScanRequest
         Spacer(Modifier.height(6.dp))
         Text(
             "Manual control. Pick an action, then hold the token to the phone. READ never " +
-                "writes; write actions authenticate first and refuse unknown models.",
+                "writes; write actions authenticate first" +
+                (if (state.nfcPreVerification) " and refuse unknown models." else "."),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (!state.nfcPreVerification) {
+            Spacer(Modifier.height(12.dp))
+            PreVerificationOffCard()
+        }
         Spacer(Modifier.height(20.dp))
 
         // Secret input — auto-loads as you type or scan.
@@ -1778,4 +1805,68 @@ private fun ErrorSheet(
             Spacer(Modifier.height(16.dp))
         }
     }
+}
+
+
+// -- Settings -----------------------------------------------------------------
+
+/** App settings. Currently a single switch: NFC device pre-verification. */
+@Composable
+private fun SettingsDialog(
+    nfcPreVerification: Boolean,
+    onNfcPreVerificationChange: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Settings") },
+        text = {
+            Column {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("NFC device pre-verification", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Before writing, check that the tapped device is a supported " +
+                                "programmable token, and explain it when it's a FIDO key or " +
+                                "another card.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = nfcPreVerification,
+                        onCheckedChange = onNfcPreVerificationChange,
+                    )
+                }
+                if (!nfcPreVerification) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Off: the app writes to any device that accepts the token " +
+                            "handshake, including models it doesn't recognise. Recommended " +
+                            "only for new or unlisted token models. Identify always runs the " +
+                            "full check.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+/** Shown on write screens while pre-verification is switched off. */
+@Composable
+private fun PreVerificationOffCard() {
+    HintCard(
+        title = "Device pre-verification is off",
+        body = "The app won't check which device you tap before writing. Make sure it's " +
+            "a programmable TOTP token. You can turn the check back on in Settings.",
+        accent = MaterialTheme.colorScheme.errorContainer,
+    )
 }

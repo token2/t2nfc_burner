@@ -80,17 +80,30 @@ class Token2Protocol(private val transport: Transport) {
 
     data class Identity(
         val kind: DeviceKind,
-        val info: TokenInfo? = null,     // populated for PROGRAMMABLE_TOKEN
+        val info: TokenInfo? = null,     // populated for PROGRAMMABLE_TOKEN (may be null when unverified)
         val hasFido: Boolean = false,
         val hasOath: Boolean = false,
+        /** False when pre-verification was skipped: [kind] is assumed, not proven. */
+        val verified: Boolean = true,
     )
 
     /**
      * Non-destructively work out what's on the reader. Order matters: we first
      * try our own info command, and only if that fails do we probe the standard
      * FIDO and OATH applets by SELECT-by-AID. SELECT is read-only and safe.
+     *
+     * When [preVerify] is false (the "NFC device pre-verification" setting is
+     * off) nothing is probed and nothing is rejected: the device is *assumed*
+     * to be a programmable token. The info command is still tried, best-effort,
+     * purely so we can show serial/model/clock if the device answers — its
+     * failure does not stop the caller.
      */
-    fun identify(): Identity {
+    fun identify(preVerify: Boolean = true): Identity {
+        if (!preVerify) {
+            val info = runCatching { readInfo() }.getOrNull()?.takeIf { it.serial.isNotBlank() }
+            return Identity(DeviceKind.PROGRAMMABLE_TOKEN, info = info, verified = false)
+        }
+
         // 1) Is it one of our programmable tokens? (info command, no SELECT.)
         val ours = runCatching { readInfo() }.getOrNull()
         if (ours != null && ours.serial.isNotBlank()) {
